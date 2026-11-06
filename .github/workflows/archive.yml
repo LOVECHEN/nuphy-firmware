@@ -1,0 +1,57 @@
+name: Archive official firmware
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: official-firmware-archive
+  cancel-in-progress: false
+
+jobs:
+  download:
+    if: github.repository == 'LOVECHEN/nuphy-firmware' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.actor == 'LOVECHEN')
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: Randomize scheduled checks
+        if: github.event_name == 'schedule'
+        run: |
+          DELAY=$(shuf -i 0-1800 -n 1)
+          printf 'Scheduled jitter: %s seconds\n' "$DELAY"
+          sleep "$DELAY"
+      - name: Checkout reviewed downloader
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Download and verify official firmware directly on runner
+        env:
+          NUPHY_UPSTREAM_CONFIG: ${{ secrets.NUPHY_UPSTREAM_CONFIG }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B .github/scripts/archive.py download --output "$RUNNER_TEMP/nuphy-official"
+      - name: Publish official originals only to Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B .github/scripts/archive.py publish --output "$RUNNER_TEMP/nuphy-official"
+      - name: Remove runner temporary downloads
+        if: always()
+        run: rm -rf -- "$RUNNER_TEMP/nuphy-official"
+      - name: Maintain one-commit archive snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          python3 -B .github/scripts/maintenance.py compact
+      - name: Keep only the latest Actions record
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B .github/scripts/maintenance.py prune
